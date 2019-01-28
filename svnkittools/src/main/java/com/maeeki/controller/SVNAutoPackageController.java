@@ -1,6 +1,7 @@
 package com.maeeki.controller;
 
 import java.io.File;
+import java.io.IOException;
 import java.text.SimpleDateFormat;
 import java.util.*;
 
@@ -39,7 +40,7 @@ public class SVNAutoPackageController {
                 : props.getProperty(SystemConstant.SVN_VERSION);
     }
 
-    public void excutePackage() throws SVNException {
+    public void excutePackage() throws SVNException{
         //初始化库。 必须先执行此操作。具体操作封装在setupLibrary方法中。
         setupLibrary();
         String finalDestUrl = outputPath + outputDirname;
@@ -81,6 +82,11 @@ public class SVNAutoPackageController {
             FileUtil.writeBytes(bytes,readMe,0,bytes.length - 1,true);
         });
         FileUtil.del(finalDestDir);
+        try {
+            Runtime.getRuntime().exec("cmd /c start " + wrapFileDir);
+        } catch (IOException e) {
+            log.warn(e.getMessage(),e);
+        }
     }
 
     /**
@@ -91,49 +97,87 @@ public class SVNAutoPackageController {
     private void handleCopy(String finalDestUrl, String svnFileUrl) {
         if(svnFileUrl.contains(SystemConstant.SRC)){
             if(svnFileUrl.contains(SystemConstant.MAVEN_JAVA)){
-                //TODO maven项目的实现方式
-            }else {
+                //从svn中读取的路径列表中截取java文件的类路径名
+                String srcUrl = svnFileUrl.substring(svnFileUrl.indexOf(SystemConstant.MAVEN_JAVA)
+                        + SystemConstant.MAVEN_JAVA.length() + 1);
+                if (!srcUrl.contains(".")) {
+                    return;
+                }
+                handleJavaCopy(finalDestUrl, srcUrl);
+            } else if(svnFileUrl.contains(SystemConstant.MAVEN_WEBAPP)){
+                handleWebResources(SystemConstant.MAVEN_WEBAPP,finalDestUrl, svnFileUrl);
+            } else if (svnFileUrl.contains(SystemConstant.MAVEN_RESOURCES)) {
+                //从svn中读取的路径列表中截取java文件的类路径名
+                String srcUrl = svnFileUrl.substring(svnFileUrl.indexOf(SystemConstant.MAVEN_RESOURCES)
+                        + SystemConstant.MAVEN_RESOURCES.length() + 1);
+                if (!srcUrl.contains(".")) {
+                    return;
+                }
+                File src = new File(webapp + SystemConstant.CLASS_URL, srcUrl);
+                File dest = new File(finalDestUrl + SystemConstant.CLASS_URL, srcUrl);
+                FileUtil.copy(src,dest,true);
+                log.info("复制"+webapp + SystemConstant.CLASS_URL+SystemConstant.PATH_SEPARATOR+srcUrl+"文件完毕");
+            } else {
                 //从svn中读取的路径列表中截取java文件的类路径名
                 String srcUrl = svnFileUrl.substring(svnFileUrl.indexOf(SystemConstant.SRC)
                         +SystemConstant.SRC.length()+1);
                 if (!srcUrl.contains(".")){
                     return;
                 }
-                //从svn中读取的路径列表中对java文件进行处理
-                if(srcUrl.endsWith(SystemConstant.JAVA_SUFFIX)){
-                    srcUrl = srcUrl.replace(SystemConstant.JAVA_SUFFIX,SystemConstant.CLASS_SUFFIX);
-                    String fileParentPath = srcUrl.substring(0,srcUrl.lastIndexOf(SystemConstant.PATH_SEPARATOR));
-                    String className = srcUrl.substring(srcUrl.lastIndexOf(SystemConstant.PATH_SEPARATOR) + 1,srcUrl.indexOf(SystemConstant.CLASS_SUFFIX));
-                    File[] files = FileUtil.ls(webapp + SystemConstant.CLASS_URL + SystemConstant.PATH_SEPARATOR +fileParentPath);
-                    for (File file : files) {
-                        //获取并复制匿名内部类对象
-                        if (file.getName().contains(className+"$")){
-                            File dest = new File(finalDestUrl +
-                                    SystemConstant.CLASS_URL,
-                                    srcUrl.replace(className,file.getName().replace(SystemConstant.CLASS_SUFFIX,"")));
-                            FileUtil.copy(file,dest,true);
-                            log.info("复制"+file.getName()+"文件完毕");
-                        }
-                    }
-
-                }
-                File src = new File(webapp + SystemConstant.CLASS_URL, srcUrl);
-                File dest = new File(finalDestUrl + SystemConstant.CLASS_URL, srcUrl);
-                FileUtil.copy(src,dest,true);
-                log.info("复制"+webapp + SystemConstant.CLASS_URL+SystemConstant.PATH_SEPARATOR+srcUrl+"文件完毕");
+                handleJavaCopy(finalDestUrl, srcUrl);
             }
         }
         if(svnFileUrl.contains(SystemConstant.WEBCONTENT)){
-            String webUrl = svnFileUrl.substring(svnFileUrl.indexOf(SystemConstant.WEBCONTENT)
-                    + SystemConstant.WEBCONTENT.length()+1);
-            if(!webUrl.contains(".")){
-                return;
-            }
-            File src = new File(webapp, webUrl);
-            File dest = new File(finalDestUrl, webUrl);
-            FileUtil.copy(src,dest,true);
-            log.info("复制"+webapp+SystemConstant.PATH_SEPARATOR+webUrl+"文件完毕");
+            handleWebResources(SystemConstant.WEBCONTENT,finalDestUrl, svnFileUrl);
         }
+    }
+
+    /**
+     * 处理web资源的复制
+     * @param type web资源所处的文件夹类型
+     * @param finalDestUrl 目标URL
+     * @param svnFileUrl svn文件url
+     */
+    private void handleWebResources(String type,String finalDestUrl, String svnFileUrl) {
+        String webUrl = svnFileUrl.substring(svnFileUrl.indexOf(type)
+                + type.length()+1);
+        if(!webUrl.contains(".")){
+            return;
+        }
+        File src = new File(webapp, webUrl);
+        File dest = new File(finalDestUrl, webUrl);
+        FileUtil.copy(src,dest,true);
+        log.info("复制"+webapp+SystemConstant.PATH_SEPARATOR+webUrl+"文件完毕");
+    }
+
+    /**
+     * 处理Java文件的复制
+     * @param finalDestUrl 目标URL
+     * @param srcUrl 源URL
+     */
+    private void handleJavaCopy(String finalDestUrl, String srcUrl) {
+        //从svn中读取的路径列表中对java文件进行处理
+        if(srcUrl.endsWith(SystemConstant.JAVA_SUFFIX)){
+            srcUrl = srcUrl.replace(SystemConstant.JAVA_SUFFIX,SystemConstant.CLASS_SUFFIX);
+            String fileParentPath = srcUrl.substring(0,srcUrl.lastIndexOf(SystemConstant.PATH_SEPARATOR));
+            String className = srcUrl.substring(srcUrl.lastIndexOf(SystemConstant.PATH_SEPARATOR) + 1,srcUrl.indexOf(SystemConstant.CLASS_SUFFIX));
+            File[] files = FileUtil.ls(webapp + SystemConstant.CLASS_URL + SystemConstant.PATH_SEPARATOR +fileParentPath);
+            for (File file : files) {
+                //获取并复制匿名内部类对象
+                if (file.getName().contains(className+"$")){
+                    File dest = new File(finalDestUrl +
+                            SystemConstant.CLASS_URL,
+                            srcUrl.replace(className,file.getName().replace(SystemConstant.CLASS_SUFFIX,"")));
+                    FileUtil.copy(file,dest,true);
+                    log.info("复制"+file.getName()+"文件完毕");
+                }
+            }
+
+        }
+        File src = new File(webapp + SystemConstant.CLASS_URL, srcUrl);
+        File dest = new File(finalDestUrl + SystemConstant.CLASS_URL, srcUrl);
+        FileUtil.copy(src,dest,true);
+        log.info("复制"+webapp + SystemConstant.CLASS_URL+SystemConstant.PATH_SEPARATOR+srcUrl+"文件完毕");
     }
 
     /*
