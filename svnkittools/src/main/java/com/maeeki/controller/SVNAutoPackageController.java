@@ -1,25 +1,37 @@
 package com.maeeki.controller;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.text.SimpleDateFormat;
 import java.util.*;
 
 import cn.hutool.core.io.FileUtil;
+import cn.hutool.core.util.ObjectUtil;
+import cn.hutool.core.util.StrUtil;
 import cn.hutool.setting.dialect.Props;
 import com.maeeki.constant.SystemConstant;
+import com.sun.deploy.util.StringUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.tmatesoft.svn.core.*;
 import org.tmatesoft.svn.core.auth.ISVNAuthenticationManager;
 import org.tmatesoft.svn.core.internal.io.dav.DAVRepositoryFactory;
 import org.tmatesoft.svn.core.internal.io.fs.FSRepositoryFactory;
 import org.tmatesoft.svn.core.internal.io.svn.SVNRepositoryFactoryImpl;
+import org.tmatesoft.svn.core.internal.wc2.ng.SvnDiffGenerator;
 import org.tmatesoft.svn.core.io.SVNRepository;
 import org.tmatesoft.svn.core.io.SVNRepositoryFactory;
+import org.tmatesoft.svn.core.wc.SVNDiffClient;
+import org.tmatesoft.svn.core.wc.SVNRevision;
 import org.tmatesoft.svn.core.wc.SVNWCUtil;
+import org.tmatesoft.svn.core.wc2.SvnDiff;
+import org.tmatesoft.svn.core.wc2.SvnOperationFactory;
+import org.tmatesoft.svn.core.wc2.SvnTarget;
 
 @Slf4j
 public class SVNAutoPackageController {
+    private static long defaultRevision;
+    private SVNRepository repository;
     private String svnUrl;
     private String svnName;
     private String svnPassword;
@@ -40,11 +52,11 @@ public class SVNAutoPackageController {
                 : props.getProperty(SystemConstant.SVN_VERSION);
     }
 
-    public void excutePackage() throws SVNException{
+    public void excutePackage() throws Exception{
         //初始化库。 必须先执行此操作。具体操作封装在setupLibrary方法中。
         setupLibrary();
         String finalDestUrl = outputPath + outputDirname;
-        SVNRepository repository = getSvnRepository();
+        repository = getSvnRepository();
         //核心代码,根据svn库及版本号获取当前库当前版本存在变更的文件列表
         List<Map<String, Object>> repoInfos = getRepoInfoByRevision(repository, version);
         List<String> allUrlList = new ArrayList<>();
@@ -55,9 +67,53 @@ public class SVNAutoPackageController {
         });
 
         //处理代码的核心逻辑
-        allUrlList.forEach(svnFileUrl -> handleCopy(finalDestUrl, svnFileUrl));
+        allUrlList.forEach(svnFileUrl -> {
+            //用于尝试复制项目之间的依赖jar包,处理状况: 依赖模块中的内容改变,pom.xml中的内容无任何变化
+            if (svnFileUrl.contains(SystemConstant.SRC) && !svnFileUrl.contains(outputDirname)) {
+                String tempStr = svnFileUrl.substring(0, svnFileUrl.indexOf(SystemConstant.SRC) - 1);
+                String modelNameStr = tempStr.substring(tempStr.lastIndexOf('/') + 1);
+                copyJarFile(finalDestUrl, modelNameStr);
+            // 用于尝试复制由于pom.xml变更影响到的jar包
+            } else if (svnFileUrl.contains(SystemConstant.POM_XML)){
+                try {
+                    //多版本version的jar包复制处理
+                    if (version.contains("~")) {
+                        String[] split = version.split("~");
+                        long startVersion = Long.parseLong(split[0]);
+                        long endVersion = Long.parseLong(split[1]);
+                        for (long i = startVersion;i <= endVersion;i++) {
+                            Set<String> diffDependency = getDiffDependency(svnUrl + '/' + SystemConstant.POM_XML, i);
+                            if (diffDependency.isEmpty()) {
+                                continue;
+                            }
+                            diffDependency.forEach(jarName -> copyJarFile(finalDestUrl,jarName));
+                        }
+                    //单版本version的jar包复制处理
+                    } else {
+                        getDiffDependency(svnUrl + '/' + SystemConstant.POM_XML,defaultRevision)
+                                .forEach(jarName -> copyJarFile(finalDestUrl,jarName));
+                    }
+                } catch (SVNException e) {
+                    log.error(e.getMessage(),e);
+                }
+            } else {
+                handleCopy(finalDestUrl, svnFileUrl);
+            }
+        });
         summaryFiles(finalDestUrl, repoInfos);
         log.info("文件全部复制完毕!增量包输出位置:"+finalDestUrl);
+    }
+
+    private void copyJarFile(String finalDestUrl, String modelNameStr) {
+        String libStr = webapp + SystemConstant.LIB_URL;
+        File[] libFiles = FileUtil.ls(libStr);
+        for (File libFile : libFiles) {
+            if (libFile.getName().contains(modelNameStr)) {
+                File file = new File(finalDestUrl+SystemConstant.LIB_URL,libFile.getName() );
+                FileUtil.copy(libFile,file,true);
+                break;
+            }
+        }
     }
 
     private void summaryFiles(String finalDestUrl, List<Map<String, Object>> repoInfos) {
@@ -224,8 +280,10 @@ public class SVNAutoPackageController {
                         true);
                 revision--;
             }
+            defaultRevision = revision;
         }else if(!revisions.contains("~")){
             long revision = Long.parseLong(revisions);
+            defaultRevision = revision;
             repository.log(new String[]{""}, entries, revision, revision, true, true);
         }else if(revisions.contains("~")){
             String[] split = revisions.split("~");
@@ -248,6 +306,80 @@ public class SVNAutoPackageController {
             list.add(map);
         });
         return list;
+    }
+
+    /**
+     * 获取pom.xml中受影响的jar包
+     * @param svnUrl
+     * @param version
+     * @return
+     * @throws SVNException
+     */
+    private Set<String> getDiffDependency(String svnUrl,long version) throws SVNException {
+        //判断当前version是否有更新的内容
+        List<SVNLogEntry> entries = new ArrayList<>();
+        repository.log(new String[]{""},
+                entries,
+                version,
+                version,
+                true,
+                true);
+        if (entries.isEmpty()) {
+            return Collections.emptySet();
+        }
+        SVNURL svnurl = SVNURL.parseURIEncoded(svnUrl);
+        final SvnOperationFactory svnOperationFactory = new SvnOperationFactory();
+        try {
+            final ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
+            final SvnDiffGenerator diffGenerator = new SvnDiffGenerator();
+            diffGenerator.setBasePath(new File(""));
+            final SvnDiff diff = svnOperationFactory.createDiff();
+            diff.setSources(SvnTarget.fromURL(svnurl, SVNRevision.create(version - 1)), SvnTarget.fromURL(svnurl, SVNRevision.create(version)));
+            diff.setDiffGenerator(diffGenerator);
+            diff.setOutput(byteArrayOutputStream);
+            diff.run();
+            final String actualDiffOutput = new String(byteArrayOutputStream.toByteArray());
+            String[] diffStr = actualDiffOutput.split("\n");
+            //获取以 + 号开头的字符串,这些都是新增内容
+            HashSet<String> acquireStr = new HashSet<>();
+            for (int i =0;i< diffStr.length;i++) {
+                String s = diffStr[i];
+                if (s.startsWith("+") && !StrUtil.isBlank(s.replace("+",""))) {
+                    //分情况获取jar包名称
+                    //若 + 号所在行包含artifactId,则直接获取jar包名称
+                    if (s.contains("artifactId")) {
+                        deleteArtifactId(acquireStr, s);
+                    }
+                    //若对某个jar包的版本version进行修改,则尝试获取其名称
+                    if (s.contains("version") && i - 2 >= 0 && diffStr[i - 2].contains("artifactId")) {
+                        deleteArtifactId(acquireStr,diffStr[i - 2]);
+                    }
+                    //TODO 其他情况的判断与处理
+                }
+            }
+            byteArrayOutputStream.close();
+            return acquireStr;
+        } catch (SVNException e) {
+            log.error(e.getMessage(),e);
+        } catch (IOException e) {
+            log.error(e.getMessage(),e);
+        } finally {
+            svnOperationFactory.dispose();
+        }
+        return Collections.emptySet();
+    }
+
+    /**
+     * 删除artifactId标签,获取jar包名称
+     * @param acquireStr 存储jar包名称的集合
+     * @param s 待处理的字符串
+     */
+    private void deleteArtifactId(HashSet<String> acquireStr, String s) {
+        String jarName = s.replace("<artifactId>", "")
+                            .replace("</artifactId>", "")
+                            .trim();
+        acquireStr.add(jarName);
+
     }
 
 }

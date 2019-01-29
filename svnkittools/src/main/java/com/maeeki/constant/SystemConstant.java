@@ -16,6 +16,8 @@ public class SystemConstant {
     public final static String OUTPUT_DIRNAME = "output.dirname";
     //class文件在服务器下固定的存储路径
     public final static String CLASS_URL = "/WEB-INF/classes";
+    //lib文件再服务器下的固定的存储该路径
+    public final static String LIB_URL = "/WEB-INF/lib";
     //普通web工程固定的文件路径
     public final static String SRC = "src";
     public final static String WEBCONTENT = "WebContent";
@@ -28,6 +30,7 @@ public class SystemConstant {
     public final static String MAVEN_TEST_JAVA = "src/test/java";
     public final static String MAVEN_TEST_RESOURCES = "/src/test/resources";
     public final static String[] MAVEN_LIST = {MAVEN_JAVA,MAVEN_RESOURCES,MAVEN_WEBAPP,MAVEN_TEST_JAVA,MAVEN_TEST_RESOURCES};
+    public static final String POM_XML = "pom.xml";
     //后缀
     public final static String CLASS_SUFFIX = ".class";
     public final static String JAVA_SUFFIX = ".java";

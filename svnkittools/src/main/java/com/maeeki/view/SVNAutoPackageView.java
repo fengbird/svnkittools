@@ -157,6 +157,7 @@ public class SVNAutoPackageView extends Application {
                 Alert alert = new Alert(Alert.AlertType.ERROR, e1.getErrorMessage().getFullMessage());
                 alert.showAndWait();
             } catch (Exception e2){
+                log.error(e2.getMessage(),e2);
                 Alert alert = new Alert(Alert.AlertType.ERROR, e2.getMessage());
                 alert.showAndWait();
             }
