@@ -7,11 +7,9 @@ import java.text.SimpleDateFormat;
 import java.util.*;
 
 import cn.hutool.core.io.FileUtil;
-import cn.hutool.core.util.ObjectUtil;
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.setting.dialect.Props;
 import com.maeeki.constant.SystemConstant;
-import com.sun.deploy.util.StringUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.tmatesoft.svn.core.*;
 import org.tmatesoft.svn.core.auth.ISVNAuthenticationManager;
@@ -21,7 +19,6 @@ import org.tmatesoft.svn.core.internal.io.svn.SVNRepositoryFactoryImpl;
 import org.tmatesoft.svn.core.internal.wc2.ng.SvnDiffGenerator;
 import org.tmatesoft.svn.core.io.SVNRepository;
 import org.tmatesoft.svn.core.io.SVNRepositoryFactory;
-import org.tmatesoft.svn.core.wc.SVNDiffClient;
 import org.tmatesoft.svn.core.wc.SVNRevision;
 import org.tmatesoft.svn.core.wc.SVNWCUtil;
 import org.tmatesoft.svn.core.wc2.SvnDiff;
@@ -59,47 +56,31 @@ public class SVNAutoPackageController {
         repository = getSvnRepository();
         //核心代码,根据svn库及版本号获取当前库当前版本存在变更的文件列表
         List<Map<String, Object>> repoInfos = getRepoInfoByRevision(repository, version);
-        List<String> allUrlList = new ArrayList<>();
         repoInfos.forEach(repoInfo -> {
             //拼接出的文件父路径
             List<String> urlList = (List<String>) repoInfo.get("urlList");
-            allUrlList.addAll(urlList);
+            //处理代码的核心逻辑
+            urlList.forEach(svnFileUrl -> {
+                //用于尝试复制项目之间的依赖jar包,处理状况: 依赖模块中的内容改变,pom.xml中的内容无任何变化
+                if (svnFileUrl.contains(SystemConstant.SRC) && !svnFileUrl.contains(outputDirname)) {
+                    String tempStr = svnFileUrl.substring(0, svnFileUrl.indexOf(SystemConstant.SRC) - 1);
+                    String modelNameStr = tempStr.substring(tempStr.lastIndexOf('/') + 1);
+                    copyJarFile(finalDestUrl, modelNameStr);
+                    // 用于尝试复制由于pom.xml变更影响到的jar包
+                } else if (svnFileUrl.contains(SystemConstant.POM_XML)){
+                    try {
+                        long revision = (long) repoInfo.get("revision");
+                        getDiffDependency(svnUrl + '/' + SystemConstant.POM_XML,revision)
+                                    .forEach(jarName -> copyJarFile(finalDestUrl,jarName));
+                    } catch (SVNException e) {
+                        log.error(e.getMessage(),e);
+                    }
+                } else {
+                    handleCopy(finalDestUrl, svnFileUrl);
+                }
+            });
         });
 
-        //处理代码的核心逻辑
-        allUrlList.forEach(svnFileUrl -> {
-            //用于尝试复制项目之间的依赖jar包,处理状况: 依赖模块中的内容改变,pom.xml中的内容无任何变化
-            if (svnFileUrl.contains(SystemConstant.SRC) && !svnFileUrl.contains(outputDirname)) {
-                String tempStr = svnFileUrl.substring(0, svnFileUrl.indexOf(SystemConstant.SRC) - 1);
-                String modelNameStr = tempStr.substring(tempStr.lastIndexOf('/') + 1);
-                copyJarFile(finalDestUrl, modelNameStr);
-            // 用于尝试复制由于pom.xml变更影响到的jar包
-            } else if (svnFileUrl.contains(SystemConstant.POM_XML)){
-                try {
-                    //多版本version的jar包复制处理
-                    if (version.contains("~")) {
-                        String[] split = version.split("~");
-                        long startVersion = Long.parseLong(split[0]);
-                        long endVersion = Long.parseLong(split[1]);
-                        for (long i = startVersion;i <= endVersion;i++) {
-                            Set<String> diffDependency = getDiffDependency(svnUrl + '/' + SystemConstant.POM_XML, i);
-                            if (diffDependency.isEmpty()) {
-                                continue;
-                            }
-                            diffDependency.forEach(jarName -> copyJarFile(finalDestUrl,jarName));
-                        }
-                    //单版本version的jar包复制处理
-                    } else {
-                        getDiffDependency(svnUrl + '/' + SystemConstant.POM_XML,defaultRevision)
-                                .forEach(jarName -> copyJarFile(finalDestUrl,jarName));
-                    }
-                } catch (SVNException e) {
-                    log.error(e.getMessage(),e);
-                }
-            } else {
-                handleCopy(finalDestUrl, svnFileUrl);
-            }
-        });
         summaryFiles(finalDestUrl, repoInfos);
         log.info("文件全部复制完毕!增量包输出位置:"+finalDestUrl);
     }
@@ -281,7 +262,7 @@ public class SVNAutoPackageController {
                 revision--;
             }
             defaultRevision = revision;
-        }else if(!revisions.contains("~")){
+        }else if(!revisions.contains("~") && !revisions.contains(",")){
             long revision = Long.parseLong(revisions);
             defaultRevision = revision;
             repository.log(new String[]{""}, entries, revision, revision, true, true);
@@ -290,6 +271,12 @@ public class SVNAutoPackageController {
             long startRevision = Long.parseLong(split[0]);
             long endRevision = Long.parseLong(split[1]);
             repository.log(new String[]{""}, entries, startRevision, endRevision, true, true);
+        }else if (revisions.contains(",")) {
+            String[] split = revisions.split(",");
+            for (String s : split) {
+                long l = Long.parseLong(s);
+                repository.log(new String[]{""},entries,l,l,true,true);
+            }
         }
 
         List<Map<String, Object>> list = new ArrayList<>();
