@@ -183,6 +183,9 @@ public class SVNAutoPackageController {
         }
         File src = new File(webapp, webUrl);
         File dest = new File(finalDestUrl, webUrl);
+        if (!src.exists()) {
+            return;
+        }
         FileUtil.copy(src,dest,true);
         log.info("复制"+webapp+SystemConstant.PATH_SEPARATOR+webUrl+"文件完毕");
     }
@@ -213,6 +216,9 @@ public class SVNAutoPackageController {
         }
         File src = new File(webapp + SystemConstant.CLASS_URL, srcUrl);
         File dest = new File(finalDestUrl + SystemConstant.CLASS_URL, srcUrl);
+        if (!src.exists()) {
+            return;
+        }
         FileUtil.copy(src,dest,true);
         log.info("复制"+webapp + SystemConstant.CLASS_URL+SystemConstant.PATH_SEPARATOR+srcUrl+"文件完毕");
     }
