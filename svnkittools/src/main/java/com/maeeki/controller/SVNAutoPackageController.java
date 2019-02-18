@@ -151,6 +151,9 @@ public class SVNAutoPackageController {
                     return;
                 }
                 File src = new File(webapp + SystemConstant.CLASS_URL, srcUrl);
+                if (!src.exists()) {
+                    return;
+                }
                 File dest = new File(finalDestUrl + SystemConstant.CLASS_URL, srcUrl);
                 FileUtil.copy(src,dest,true);
                 log.info("复制"+webapp + SystemConstant.CLASS_URL+SystemConstant.PATH_SEPARATOR+srcUrl+"文件完毕");
