@@ -178,7 +178,7 @@ public class SVNAutoPackageView extends Application {
     }
 
     private void configPrimaryStage(Stage primaryStage, GridPane gridPane) {
-        primaryStage.setTitle("超方便的SVN打包工具~");
+        primaryStage.setTitle("超方便的SVN打包工具~  by 赵腾超");
         Scene scene = new Scene(gridPane,800,500);
         primaryStage.setScene(scene);
         primaryStage.show();

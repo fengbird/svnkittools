@@ -204,7 +204,12 @@ public class SVNAutoPackageController {
             srcUrl = srcUrl.replace(SystemConstant.JAVA_SUFFIX,SystemConstant.CLASS_SUFFIX);
             String fileParentPath = srcUrl.substring(0,srcUrl.lastIndexOf(SystemConstant.PATH_SEPARATOR));
             String className = srcUrl.substring(srcUrl.lastIndexOf(SystemConstant.PATH_SEPARATOR) + 1,srcUrl.indexOf(SystemConstant.CLASS_SUFFIX));
-            File[] files = FileUtil.ls(webapp + SystemConstant.CLASS_URL + SystemConstant.PATH_SEPARATOR +fileParentPath);
+            String s = webapp + SystemConstant.CLASS_URL + SystemConstant.PATH_SEPARATOR + fileParentPath;
+            File file1 = new File(s);
+            if (!file1.exists() || !file1.isDirectory()) {
+                return;
+            }
+            File[] files = FileUtil.ls(s);
             for (File file : files) {
                 //获取并复制匿名内部类对象
                 if (file.getName().contains(className+"$")){
@@ -370,12 +375,13 @@ public class SVNAutoPackageController {
      * @param acquireStr 存储jar包名称的集合
      * @param s 待处理的字符串
      */
-    private void deleteArtifactId(HashSet<String> acquireStr, String s) {
-        String jarName = s.replace("<artifactId>", "")
-                            .replace("</artifactId>", "")
+    private static void deleteArtifactId(HashSet<String> acquireStr, String s) {
+        String beginStr = "<artifactId>";
+        int begin = s.indexOf(beginStr)+beginStr.length();
+        int end = s.indexOf("</artifactId>");
+        String jarName = s.substring(begin, end)
                             .trim();
         acquireStr.add(jarName);
 
     }
-
 }
